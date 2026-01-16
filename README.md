@@ -1,27 +1,41 @@
-# Custom Agent Docker
+# Matrix - Agent Framework API
 
-Versão Docker do Custom Agent usando FastAPI com estrutura organizada.
+API FastAPI para orquestração de agentes de IA usando o Microsoft Agent Framework, com suporte a workflows dinâmicos e múltiplos formatos de execução.
+
+## Características
+
+- 🤖 **Agentes de IA**: Criação e execução de agentes com ferramentas configuráveis
+- 🔄 **Workflows Dinâmicos**: Orquestração de múltiplos agentes e funções em workflows complexos
+- 🛠️ **Ferramentas**: Suporte a ferramentas como code interpreter e execução de comandos CLI
+- 📊 **Observabilidade**: Integração com Azure Monitor e Aspire Dashboard para traces e métricas
+- 🐳 **Docker Ready**: Containerização completa com Docker e Docker Compose
 
 ## Estrutura do Projeto
 
 ```
-custom-agent-docker/
+matrix/
 ├── src/
-│   ├── main.py              # Aplicação FastAPI principal
-│   ├── config.py            # Configurações e variáveis de ambiente
-│   ├── models/              # Modelos Pydantic (schemas)
-│   │   └── schemas.py
-│   ├── routes/              # Rotas da API
-│   │   ├── agent.py         # Rotas do agente
-│   │   └── health.py        # Rotas de health check
-│   ├── services/            # Lógica de negócio
-│   │   └── agent_service.py # Serviço do agente
-│   └── tools/               # Tools do agente
-│       └── weather.py       # Tool de clima
+│   ├── main.py                  # Aplicação FastAPI principal
+│   ├── config.py                # Configurações e variáveis de ambiente
+│   ├── models/                  # Modelos Pydantic (schemas)
+│   │   └── schemas.py           # Schemas de requisição/resposta e workflows
+│   ├── routes/                  # Rotas da API
+│   │   ├── agent.py             # Rotas do agente
+│   │   ├── health.py            # Rotas de health check
+│   │   └── workflow.py          # Rotas de orquestração de workflows
+│   ├── services/                # Lógica de negócio
+│   │   ├── agent_service.py     # Serviço do agente
+│   │   └── workflow_service.py  # Serviço de orquestração de workflows
+│   └── tools/                   # Tools do agente
+│       └── cli.py               # Tool de execução de comandos CLI
+├── deploy/                      # Scripts de deploy
+│   ├── azure-container-app.bicep
+│   └── deploy.sh
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
-└── README.md
+├── README.md
+└── WORKFLOW_EXAMPLES.md         # Exemplos de workflows dinâmicos
 ```
 
 ## Pré-requisitos
@@ -43,6 +57,7 @@ cp .env.example .env
 - `AZURE_OPENAI_DEPLOYMENT_NAME`: Nome do deployment
 - `API_TRACES_INSTRUMENTATION_KEY`: Connection string do Application Insights (opcional)
 - `ASPIRE_OTLP_ENDPOINT`: Endpoint OTLP do Aspire Dashboard (padrão: `http://localhost:4317`)
+- `RATE_LIMIT_INTERVAL_SECONDS`: Intervalo mínimo em segundos entre chamadas à API OpenAI (padrão: `1.0`)
 
 ## Execução
 
@@ -63,6 +78,8 @@ docker run -p 8000:8000 --env-file .env custom-agent
 
 - `GET /` - Informações da API
 - `POST /agent` - Envia mensagem para o agente
+- `POST /workflow` - Executa workflows dinâmicos de orquestração
+- `POST /workflow/viz` - Gera visualização Mermaid do workflow
 - `GET /health` - Health check
 
 ### POST /agent
@@ -95,47 +112,510 @@ Envia uma mensagem para o agente. Todos os parâmetros de configuração do agen
 }
 ```
 
-## Exemplo de uso
+## Exemplos de Uso
+
+### Endpoint de Agente
 
 ```bash
 # Health check
 curl http://localhost:8000/health
 
-# Enviar mensagem para o agente (usando valores padrão, sem tools)
+# Enviar mensagem para o agente (usando valores padrão)
 curl -X POST http://localhost:8000/agent \
   -H "Content-Type: application/json" \
-  -d '{"message": "What is the weather in Paris?"}'
+  -d '{"message": "Hello, how can you help me?"}'
 
-# Enviar mensagem com tools
+# Enviar mensagem com configuração customizada
 curl -X POST http://localhost:8000/agent \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "What is the weather in Tokyo?",
-    "tools": ["get_weather"]
+    "message": "Analyze this data: [1, 2, 3, 4, 5]",
+    "name": "data-analyzer",
+    "instructions": "You are a data analysis expert.",
+    "tools": ["code_interpreter"]
+  }'
+```
+
+### Endpoint de Workflow
+
+```bash
+# Workflow simples: dois agentes em sequência
+curl -X POST http://localhost:8000/workflow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow": {
+      "name": "simple-pipeline",
+      "executors": [
+        {
+          "type": "agent",
+          "name": "processor",
+          "instructions": "Process the input"
+        },
+        {
+          "type": "agent",
+          "name": "formatter",
+          "instructions": "Format the output"
+        }
+      ],
+      "edges": [
+        {
+          "from_executor": "processor",
+          "to_executor": "formatter",
+          "edge_type": "direct"
+        }
+      ],
+      "start_executor": "processor"
+    },
+    "input_message": "Process this: Hello World"
   }'
 
-# Enviar mensagem com configuração customizada completa
-curl -X POST http://localhost:8000/agent \
+# Workflow com agente + função CLI
+curl -X POST http://localhost:8000/workflow \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "What is the weather in Tokyo?",
-    "name": "weather-bot",
-    "id": "weather-bot-001",
-    "instructions": "You are an expert weather assistant. Always provide detailed weather information.",
-    "tools": ["get_weather"]
-  }'
-
-# Enviar mensagem sem tools (agente sem ferramentas)
-curl -X POST http://localhost:8000/agent \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Hello, how are you?",
-    "instructions": "You are a friendly assistant.",
-    "tools": null
+    "workflow": {
+      "name": "agent-cli-workflow",
+      "executors": [
+        {
+          "type": "agent",
+          "name": "command_gen",
+          "instructions": "Generate a CLI command"
+        },
+        {
+          "type": "function",
+          "name": "executor",
+          "function_name": "execute_command"
+        }
+      ],
+      "edges": [
+        {
+          "from_executor": "command_gen",
+          "to_executor": "executor",
+          "edge_type": "direct"
+        }
+      ],
+      "start_executor": "command_gen"
+    },
+    "input_message": "List Python files in current directory"
   }'
 ```
 
 **Nota:** O agente é cacheado por configuração. Agentes com a mesma configuração (name, id, instructions, tools) reutilizam a mesma instância.
+
+## Rate Limiting
+
+Para evitar erros de rate limit da OpenAI, o sistema implementa um rate limiter que controla o intervalo mínimo entre chamadas à API.
+
+### Configuração
+
+Configure o intervalo mínimo através da variável de ambiente `RATE_LIMIT_INTERVAL_SECONDS`:
+
+```bash
+# .env
+RATE_LIMIT_INTERVAL_SECONDS=2.0  # 2 segundos entre cada chamada
+```
+
+**Valores recomendados:**
+- `1.0` (padrão): Para uso normal
+- `2.0`: Para evitar rate limits em uso intenso
+- `3.0` ou mais: Para contas com limites mais restritivos
+
+### Como Funciona
+
+O rate limiter:
+- ✅ Garante um intervalo mínimo entre chamadas à API OpenAI
+- ✅ Aplica automaticamente em todos os agentes e workflows
+- ✅ É thread-safe e funciona com execuções concorrentes
+- ✅ Registra logs quando está aguardando (nível DEBUG)
+
+### Exemplo de Uso
+
+Com `RATE_LIMIT_INTERVAL_SECONDS=2.0`:
+- Chamada 1: executa imediatamente
+- Chamada 2: aguarda 2 segundos após a primeira
+- Chamada 3: aguarda 2 segundos após a segunda
+- E assim por diante...
+
+Isso garante que você não exceda os limites de taxa da OpenAI mesmo com múltiplas requisições simultâneas.
+
+## Workflows Dinâmicos
+
+O projeto inclui uma camada de orquestração dinâmica baseada no [Microsoft Agent Framework Workflows](https://learn.microsoft.com/en-us/agent-framework/user-guide/workflows/overview), permitindo criar e executar workflows complexos sem recompilar código.
+
+### POST /workflow
+
+Cria e executa workflows dinâmicos compostos por múltiplos executores (agentes ou funções) conectados por edges.
+
+**Request Body:**
+```json
+{
+  "workflow": {
+    "name": "data-analysis-pipeline",
+    "description": "Analisa e formata dados",
+    "executors": [
+      {
+        "type": "agent",
+        "name": "analyzer",
+        "agent_name": "data-analyzer",
+        "instructions": "Você é um analista de dados. Analise os dados fornecidos.",
+        "tools": ["code_interpreter"]
+      },
+      {
+        "type": "agent",
+        "name": "formatter",
+        "agent_name": "data-formatter",
+        "instructions": "Você formata dados de forma clara e organizada."
+      }
+    ],
+    "edges": [
+      {
+        "from_executor": "analyzer",
+        "to_executor": "formatter",
+        "edge_type": "direct"
+      }
+    ],
+    "start_executor": "analyzer",
+    "workflow_type": "sequential"
+  },
+  "input_message": "Analise estes dados: [10, 20, 30, 40, 50]",
+  "streaming": false
+}
+```
+
+**Parâmetros do Workflow:**
+
+- `name` (obrigatório): Nome único do workflow
+- `description` (opcional): Descrição do workflow
+- `executors` (obrigatório): Lista de executores
+  - **Agent Executor:**
+    - `type`: `"agent"`
+    - `name`: Nome único do executor
+    - `agent_name`: Nome do agente (opcional)
+    - `agent_id`: ID do agente (opcional)
+    - `instructions`: Instruções para o agente
+    - `tools`: Lista de ferramentas (opcional, ex: `["code_interpreter", "execute_command"]`)
+  - **Function Executor:**
+    - `type`: `"function"`
+    - `name`: Nome único do executor
+    - `function_name`: Nome da função (ex: `"execute_command"`)
+    - `parameters`: Parâmetros para a função (opcional)
+- `edges` (obrigatório): Lista de conexões entre executores
+  - `from_executor`: Nome do executor origem
+  - `to_executor`: Nome do executor destino
+  - `edge_type`: Tipo de edge (`"direct"`, `"conditional"`, `"fan_out"`, `"fan_in"`)
+  - `condition`: Condição para edges condicionais (opcional)
+- `start_executor` (obrigatório): Nome do executor inicial
+- `workflow_type` (opcional): Tipo do workflow (`"sequential"`, `"parallel"`, `"conditional"`, `"dynamic"`)
+
+**Parâmetros da Requisição:**
+
+- `workflow` (obrigatório): Definição do workflow
+- `input_message` (obrigatório): Mensagem inicial para o workflow
+- `streaming` (opcional, padrão: `false`): Se `true`, retorna eventos em tempo real
+
+**Response:**
+```json
+{
+  "output": "Análise completa dos dados...",
+  "trace_id": "abc123...",
+  "execution_steps": [
+    {
+      "step": "executor_created",
+      "executor": "analyzer",
+      "type": "agent"
+    },
+    {
+      "step": "edge_added",
+      "from": "analyzer",
+      "to": "formatter",
+      "type": "direct"
+    },
+    {
+      "step": "workflow_built",
+      "status": "success"
+    },
+    {
+      "step": "workflow_execution_completed",
+      "status": "success",
+      "output_length": 150
+    }
+  ],
+  "workflow_id": "data-analysis-pipeline"
+}
+```
+
+### Exemplos de Workflows
+
+#### Workflow Sequencial Simples
+
+Dois agentes em sequência: análise → formatação
+
+```bash
+curl -X POST http://localhost:8000/workflow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow": {
+      "name": "analyze-and-format",
+      "executors": [
+        {
+          "type": "agent",
+          "name": "analyzer",
+          "instructions": "Analise os dados fornecidos",
+          "tools": ["code_interpreter"]
+        },
+        {
+          "type": "agent",
+          "name": "formatter",
+          "instructions": "Formate o resultado de forma clara"
+        }
+      ],
+      "edges": [
+        {
+          "from_executor": "analyzer",
+          "to_executor": "formatter",
+          "edge_type": "direct"
+        }
+      ],
+      "start_executor": "analyzer"
+    },
+    "input_message": "Analise: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"
+  }'
+```
+
+#### Workflow com Função Customizada
+
+Agente gera comando → Executa comando CLI
+
+```bash
+curl -X POST http://localhost:8000/workflow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow": {
+      "name": "agent-command-pipeline",
+      "executors": [
+        {
+          "type": "agent",
+          "name": "command_generator",
+          "instructions": "Gere um comando CLI apropriado baseado na solicitação"
+        },
+        {
+          "type": "function",
+          "name": "executor",
+          "function_name": "execute_command",
+          "parameters": {
+            "working_directory": "."
+          }
+        }
+      ],
+      "edges": [
+        {
+          "from_executor": "command_generator",
+          "to_executor": "executor",
+          "edge_type": "direct"
+        }
+      ],
+      "start_executor": "command_generator"
+    },
+    "input_message": "Liste os arquivos Python no diretório atual"
+  }'
+```
+
+#### Workflow Multi-Estágio
+
+Pipeline com três estágios: análise → validação → formatação
+
+```bash
+curl -X POST http://localhost:8000/workflow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow": {
+      "name": "three-stage-pipeline",
+      "executors": [
+        {
+          "type": "agent",
+          "name": "analyzer",
+          "instructions": "Analise o conteúdo fornecido",
+          "tools": ["code_interpreter"]
+        },
+        {
+          "type": "agent",
+          "name": "validator",
+          "instructions": "Valide a análise anterior"
+        },
+        {
+          "type": "agent",
+          "name": "formatter",
+          "instructions": "Formate o resultado final"
+        }
+      ],
+      "edges": [
+        {
+          "from_executor": "analyzer",
+          "to_executor": "validator",
+          "edge_type": "direct"
+        },
+        {
+          "from_executor": "validator",
+          "to_executor": "formatter",
+          "edge_type": "direct"
+        }
+      ],
+      "start_executor": "analyzer"
+    },
+    "input_message": "Analise este código: def hello(): print(\"Hello\")"
+  }'
+```
+
+#### Workflow de Desenvolvimento Completo
+
+Pipeline completa de desenvolvimento: análise → planejamento → codificação → testes → commit → push
+
+```bash
+curl -X POST http://localhost:8000/workflow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow": {
+      "name": "development-pipeline",
+      "description": "Pipeline completa de desenvolvimento automatizado",
+      "executors": [
+        {
+          "type": "agent",
+          "name": "analyser",
+          "agent_name": "architect_analyser",
+          "instructions": "Você é um analista de código especializado. Analise o código fornecido e identifique problemas e oportunidades de melhoria.",
+          "tools": ["code_interpreter"]
+        },
+        {
+          "type": "agent",
+          "name": "planner",
+          "agent_name": "architect_planner",
+          "instructions": "Você é um planejador de desenvolvimento. Crie um plano detalhado de ação baseado na análise.",
+          "tools": []
+        },
+        {
+          "type": "agent",
+          "name": "coder",
+          "agent_name": "architect_coder",
+          "instructions": "Você é um desenvolvedor experiente. Implemente as mudanças conforme o plano fornecido usando as ferramentas disponíveis.",
+          "tools": ["code_interpreter", "execute_command"]
+        },
+        {
+          "type": "agent",
+          "name": "tester",
+          "agent_name": "architect_tester",
+          "instructions": "Você é um especialista em testes. Valide o código implementado e forneça feedback sobre a qualidade.",
+          "tools": ["code_interpreter", "execute_command"]
+        },
+        {
+          "type": "agent",
+          "name": "pusher",
+          "agent_name": "architect_pusher",
+          "instructions": "Você é responsável por fazer commit e push das mudanças. Faça commit com mensagens claras e faça push para o repositório remoto na branch main.",
+          "tools": ["execute_command"]
+        },
+        {
+          "type": "agent",
+          "name": "puller",
+          "agent_name": "architect_puller",
+          "instructions": "Você é responsável por verificar o status final do repositório e fornecer um resumo do que foi realizado.",
+          "tools": ["execute_command"]
+        }
+      ],
+      "edges": [
+        {
+          "from_executor": "analyser",
+          "to_executor": "planner",
+          "edge_type": "direct"
+        },
+        {
+          "from_executor": "planner",
+          "to_executor": "coder",
+          "edge_type": "direct"
+        },
+        {
+          "from_executor": "coder",
+          "to_executor": "tester",
+          "edge_type": "direct"
+        },
+        {
+          "from_executor": "tester",
+          "to_executor": "pusher",
+          "edge_type": "direct"
+        },
+        {
+          "from_executor": "pusher",
+          "to_executor": "puller",
+          "edge_type": "direct"
+        }
+      ],
+      "start_executor": "analyser",
+      "workflow_type": "sequential"
+    },
+    "input_message": "Refatore o ClimateAgent para melhorar a estrutura interna preservando o comportamento. Depois, delete o arquivo README.md e faça commit e push de todas as mudanças para o repositório https://github.com/mediote/architect na branch main."
+  }'
+```
+
+Este workflow demonstra uma pipeline completa de desenvolvimento com 6 agentes especializados:
+1. **Analyser**: Analisa código e identifica melhorias
+2. **Planner**: Cria plano de ação detalhado
+3. **Coder**: Implementa as mudanças
+4. **Tester**: Valida e testa o código
+5. **Pusher**: Faz commit e push das mudanças
+6. **Puller**: Verifica status final e fornece resumo
+
+### Funcionalidades dos Workflows
+
+- **Orquestração Dinâmica**: Crie workflows via API sem recompilar código
+- **Múltiplos Formatos**: Sequencial, paralelo, condicional, dinâmico
+- **Executores Flexíveis**: 
+  - Agentes de IA com ferramentas configuráveis
+  - Funções customizadas (ex: `execute_command`)
+- **Edges Configuráveis**: Conexões diretas e condicionais
+- **Observabilidade**: Trace IDs e logs detalhados de execução
+- **Streaming**: Suporte a execução streaming para respostas em tempo real
+
+### Visualização de Workflows
+
+Você pode visualizar workflows de forma visual usando várias ferramentas:
+
+#### Via API (Recomendado)
+
+```bash
+curl -X POST http://localhost:8000/workflow/viz \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow": {
+      "name": "my-workflow",
+      "executors": [...],
+      "edges": [...],
+      "start_executor": "..."
+    }
+  }'
+```
+
+A resposta inclui um diagrama Mermaid que pode ser visualizado em:
+- **VS Code**: Com extensão Mermaid Preview
+- **GitHub/GitLab**: Renderiza automaticamente em Markdown
+- **Mermaid Live Editor**: https://mermaid.live
+- **Qualquer ferramenta que suporte Mermaid**
+
+#### Extensões do VS Code Recomendadas
+
+- **Mermaid Preview** (`bierner.markdown-mermaid`): Visualiza diagramas Mermaid
+- **JSON Flow** (`ManuelGil.json-flow`): Visualiza JSON como grafos
+- **JSON Crack** (`AykutSarac.jsoncrack-vscode`): Visualiza estruturas JSON
+
+#### Ferramentas Online
+
+- **Mermaid Live Editor**: https://mermaid.live
+- **Draw.io**: https://app.diagrams.net (editor visual drag-and-drop)
+
+Para mais detalhes, consulte [WORKFLOW_VISUALIZATION.md](./WORKFLOW_VISUALIZATION.md).
+
+### Documentação Adicional
+
+- [WORKFLOW_EXAMPLES.md](./WORKFLOW_EXAMPLES.md) - Exemplos detalhados de workflows
+- [WORKFLOW_VISUALIZATION.md](./WORKFLOW_VISUALIZATION.md) - Guia de visualização de workflows
 
 ## Observabilidade com Aspire Dashboard
 

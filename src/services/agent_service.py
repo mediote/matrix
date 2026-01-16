@@ -16,6 +16,7 @@ from src.config import (
     AZURE_OPENAI_ENDPOINT,
 )
 from src.tools import execute_command
+from src.utils.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,11 @@ class AgentService:
                 instructions=instructions or "You are a helpful assistant.",
                 agent_id=agent_id or "agent",
             )
+            
+            # Apply rate limiting before API call
+            rate_limiter = get_rate_limiter()
+            await rate_limiter.wait_if_needed()
+            
             result = await agent.run(message)
             response_text = result.text or "OK"
 

@@ -6,6 +6,7 @@ from openai import RateLimitError
 
 from src.models import MessageRequest, MessageResponse
 from src.services import AgentService
+from src.utils.rate_limiter import record_rate_limit_error
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ async def agent_endpoint(request: MessageRequest) -> MessageResponse:
     except (RateLimitError, ServiceResponseException) as e:
         error_msg = str(e)
         if "429" in error_msg or "RateLimitError" in error_msg or "Too Many Requests" in error_msg:
+            record_rate_limit_error()  # Record for adaptive rate limiting
             logger.warning("Rate limit exceeded: %s", error_msg)
             raise HTTPException(
                 status_code=429,

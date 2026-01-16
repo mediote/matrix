@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from src.config import API_TRACES_INSTRUMENTATION_KEY, ASPIRE_OTLP_ENDPOINT
-from src.routes import agent, health
+from src.routes import agent, health, workflow, workflow_viz
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -77,6 +77,8 @@ app = FastAPI(
 # Include routers
 app.include_router(agent.router)
 app.include_router(health.router)
+app.include_router(workflow.router)
+app.include_router(workflow_viz.router)
 
 
 @app.get("/")
