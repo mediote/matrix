@@ -59,8 +59,38 @@ A instrumentação cria spans hierárquicos seguindo as convenções do MAF:
   - `gen_ai.request.type`: "chat"
   - `gen_ai.response.finish_reason`: "stop"
   - `gen_ai.response.length`
+- **Child Spans** (criados automaticamente pelo framework):
+  - `chat gpt-*` - Interações com o modelo GPT
+  - `execute_tool exec...` - Execução de ferramentas
 
-#### 6. Rate Limiting
+#### 6. Message Parsing and Analysis (Melhorias de Visualização)
+- **Span**: `gen_ai.message.parse`
+- **Kind**: `INTERNAL`
+- **Atributos**:
+  - `gen_ai.agent.name`
+  - `gen_ai.operation.name`: "parse_messages"
+  - `gen_ai.message.tool_calls_count`: Número de tool calls encontrados
+  - `gen_ai.message.tool_names`: Lista de nomes de tools (separados por vírgula)
+  - `gen_ai.message.has_text_response`: Se há resposta de texto
+  - `gen_ai.message.parse_error`: Erro se o parsing falhar
+
+- **Child Spans**:
+  - **`gen_ai.tool_call.{tool_name}`** - Para cada tool call identificado
+    - **Atributos**:
+      - `gen_ai.agent.name`
+      - `gen_ai.tool_call.id`: ID único do tool call
+      - `gen_ai.tool_call.name`: Nome da ferramenta
+      - `gen_ai.tool_call.arguments`: Argumentos JSON do tool call
+  
+  - **`gen_ai.response.analyze`** - Análise da resposta do agente
+    - **Atributos**:
+      - `gen_ai.agent.name`
+      - `gen_ai.response.length`: Tamanho da resposta
+      - `gen_ai.response.has_json`: Se contém JSON
+      - `gen_ai.response.is_valid_json`: Se é JSON válido
+      - `gen_ai.response.json_keys`: Chaves do JSON (se aplicável)
+
+#### 7. Rate Limiting
 - **Span**: `rate_limit.wait`
 - **Kind**: `INTERNAL`
 - **Atributos**:
@@ -101,6 +131,11 @@ Todos os logs seguem um formato padronizado com prefixos para fácil filtragem:
 - `[RATE LIMIT]` - Informações de rate limiting
 - `[RATE LIMIT ERROR]` - Erro de rate limit
 - `[WORKFLOW EVENT]` - Eventos durante streaming
+- `[TOOL CALL]` - Tool call identificado nas mensagens
+- `[TOOL CALL ARGS]` - Argumentos de tool call (DEBUG)
+- `[MESSAGE PARSE]` - Parsing de mensagens de saída
+- `[AI RESPONSE]` - Resposta de texto do AI (DEBUG)
+- `[RESPONSE ANALYZE]` - Análise de resposta (JSON/texto)
 
 ### Exemplo de Logs
 
@@ -160,11 +195,18 @@ workflow.project-atlas-pipeline (SERVER)
 ├── workflow.build.finalize (INTERNAL)
 └── workflow.execute (INTERNAL)
     ├── executor.agent.architect_puller (INTERNAL)
-    │   ├── executor.rate_limit (INTERNAL)
+    │   ├── rate_limit.wait (INTERNAL)
     │   └── gen_ai.invoke_agent (CLIENT)
+    │       ├── chat gpt-5.2-chat (INTERNAL)
+    │       │   └── gen_ai.message.parse (INTERNAL)
+    │       │       ├── gen_ai.tool_call.execute_command (INTERNAL)
+    │       │       ├── gen_ai.tool_call.code_interpreter (INTERNAL)
+    │       │       └── gen_ai.response.analyze (INTERNAL)
+    │       └── execute_tool exec... (INTERNAL)
     ├── executor.agent.architect_analyser (INTERNAL)
-    │   ├── executor.rate_limit (INTERNAL)
+    │   ├── rate_limit.wait (INTERNAL)
     │   └── gen_ai.invoke_agent (CLIENT)
+    │       └── ...
     └── ...
 ```
 
@@ -202,6 +244,40 @@ Seguimos as convenções do MAF:
 4. ✅ **Rastreamento de rate limits** com spans dedicados
 5. ✅ **Erros detalhados** com stack traces e contexto
 6. ✅ **Trace IDs** em todos os logs para correlação
+7. ✅ **Visualização melhorada de mensagens AI** com spans granulares:
+   - `gen_ai.message.parse` - Parsing de mensagens de saída
+   - `gen_ai.tool_call.{tool_name}` - Spans dedicados para cada tool call
+   - `gen_ai.response.analyze` - Análise de respostas (JSON/texto)
+
+### Visualização Melhorada de `gen_ai.output.messages`
+
+Para melhorar a visualização das mensagens de saída do AI (`gen_ai.output.messages`), foram adicionados spans granulares que:
+
+1. **Parseiam as mensagens** automaticamente após a execução do agente
+2. **Identificam tool calls** e criam spans dedicados para cada um
+3. **Analisam respostas** para detectar JSON estruturado vs texto
+4. **Adicionam logs estruturados** com informações legíveis
+
+**Exemplo de hierarquia melhorada:**
+```
+executor.agent.architect_puller
+├── rate_limit.wait
+└── gen_ai.invoke_agent
+    └── chat gpt-5.2-chat
+        └── gen_ai.message.parse
+            ├── gen_ai.tool_call.execute_command
+            │   └── [TOOL CALL] Agent 'architect_puller' → Tool: execute_command | ID: call_AygXSIV...
+            ├── gen_ai.tool_call.code_interpreter
+            │   └── [TOOL CALL] Agent 'architect_puller' → Tool: code_interpreter | ID: call_BzgYSJW...
+            └── gen_ai.response.analyze
+                └── [RESPONSE ANALYZE] Agent 'architect_puller' → Valid JSON with keys: project_context, ...
+```
+
+**Benefícios:**
+- **Tool calls visíveis** como spans individuais, não apenas JSON bruto
+- **Argumentos de tools** acessíveis como atributos do span
+- **Detecção automática de JSON** nas respostas
+- **Logs legíveis** em vez de apenas atributos JSON grandes
 
 ## Como Usar
 
