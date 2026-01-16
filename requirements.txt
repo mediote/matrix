@@ -1,0 +1,9 @@
+azure-identity
+azure-ai-projects
+azure-monitor-opentelemetry
+pydantic
+agent-framework
+python-dotenv
+fastapi
+uvicorn[standard]
+opentelemetry-exporter-otlp-proto-grpc
