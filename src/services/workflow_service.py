@@ -1,15 +1,10 @@
 """Workflow orchestration service for dynamic workflow execution."""
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from agent_framework import (
-    Executor,
-    HostedCodeInterpreterTool,
-    WorkflowBuilder,
-    WorkflowContext,
-    handler,
-)
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.observability import get_tracer
 from azure.identity import AzureCliCredential
@@ -24,7 +19,6 @@ from src.config import (
 )
 from src.models.schemas import (
     AgentExecutorConfig,
-    EdgeConfig,
     FunctionExecutorConfig,
     WorkflowDefinition,
 )
@@ -33,6 +27,194 @@ from src.tools import execute_command
 from src.utils.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
+
+
+def _instrument_agent_output(
+    result: Any,
+    agent_name: str,
+    tracer: Any,
+    parent_span: Any,
+) -> None:
+    """
+    Instrument agent output messages with granular spans for better visualization.
+
+    Creates spans for:
+    - Message parsing
+    - Tool calls identification
+    - Response content analysis
+
+    Args:
+        result: Agent run result object
+        agent_name: Name of the agent
+        tracer: OpenTelemetry tracer
+        parent_span: Parent span context
+    """
+    try:
+        # Try to extract messages from result
+        messages = None
+        tool_calls = []
+        response_text = None
+
+        # Check if result has messages attribute
+        if hasattr(result, "messages"):
+            messages = result.messages
+        elif hasattr(result, "text"):
+            response_text = result.text
+
+        # Create span for message parsing
+        with tracer.start_as_current_span(
+            "gen_ai.message.parse",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "gen_ai.agent.name": agent_name,
+                "gen_ai.operation.name": "parse_messages",
+            },
+        ) as parse_span:
+            if messages:
+                try:
+                    # Parse messages if it's a string
+                    if isinstance(messages, str):
+                        messages = json.loads(messages)
+
+                    # Extract tool calls from messages
+                    for msg in messages if isinstance(messages, list) else [messages]:
+                        if isinstance(msg, dict):
+                            # Check for tool calls in message
+                            if "parts" in msg:
+                                for part in msg.get("parts", []):
+                                    if isinstance(part, dict):
+                                        # Tool call part
+                                        if part.get("type") == "tool_call":
+                                            tool_call_id = part.get("id", "unknown")
+                                            tool_name = part.get("name", "unknown")
+                                            tool_args = part.get("arguments", {})
+
+                                            tool_calls.append(
+                                                {
+                                                    "id": tool_call_id,
+                                                    "name": tool_name,
+                                                    "arguments": tool_args,
+                                                }
+                                            )
+
+                                            # Create dedicated span for each tool call
+                                            with tracer.start_as_current_span(
+                                                f"gen_ai.tool_call.{tool_name}",
+                                                kind=SpanKind.INTERNAL,
+                                                attributes={
+                                                    "gen_ai.agent.name": agent_name,
+                                                    "gen_ai.tool_call.id": tool_call_id,
+                                                    "gen_ai.tool_call.name": tool_name,
+                                                    "gen_ai.tool_call.arguments": (
+                                                        json.dumps(tool_args)
+                                                        if tool_args
+                                                        else ""
+                                                    ),
+                                                },
+                                            ) as tool_call_span:
+                                                logger.info(
+                                                    f"[TOOL CALL] Agent '{agent_name}' → "
+                                                    f"Tool: {tool_name} | ID: {tool_call_id}"
+                                                )
+
+                                                # Log tool call details
+                                                if tool_args:
+                                                    logger.debug(
+                                                        f"[TOOL CALL ARGS] {tool_name}: {json.dumps(tool_args, indent=2)}"
+                                                    )
+
+                                        # Text response part
+                                        elif part.get("type") == "text":
+                                            text_content = part.get("content", "")
+                                            if text_content:
+                                                response_text = text_content
+                                                parse_span.set_attribute(
+                                                    "gen_ai.response.text_length",
+                                                    len(text_content),
+                                                )
+                                                logger.debug(
+                                                    f"[AI RESPONSE] Agent '{agent_name}' text response: "
+                                                    f"{len(text_content)} chars"
+                                                )
+
+                            # Direct text content
+                            elif "content" in msg:
+                                response_text = msg.get("content", "")
+
+                    # Set attributes on parse span
+                    parse_span.set_attribute(
+                        "gen_ai.message.tool_calls_count",
+                        len(tool_calls),
+                    )
+                    parse_span.set_attribute(
+                        "gen_ai.message.has_text_response",
+                        bool(response_text),
+                    )
+
+                    if tool_calls:
+                        tool_names = [tc["name"] for tc in tool_calls]
+                        parse_span.set_attribute(
+                            "gen_ai.message.tool_names",
+                            ",".join(tool_names),
+                        )
+                        logger.info(
+                            f"[MESSAGE PARSE] Agent '{agent_name}' → "
+                            f"Found {len(tool_calls)} tool call(s): {', '.join(tool_names)}"
+                        )
+
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    logger.warning(
+                        f"[MESSAGE PARSE] Failed to parse messages for '{agent_name}': {e}"
+                    )
+                    parse_span.set_attribute("gen_ai.message.parse_error", str(e))
+
+            # If we have response text, create a span for content analysis
+            if response_text:
+                with tracer.start_as_current_span(
+                    "gen_ai.response.analyze",
+                    kind=SpanKind.INTERNAL,
+                    attributes={
+                        "gen_ai.agent.name": agent_name,
+                        "gen_ai.response.length": len(response_text),
+                        "gen_ai.response.has_json": "{" in response_text
+                        and "}" in response_text,
+                    },
+                ) as analyze_span:
+                    # Try to detect if response contains JSON
+                    try:
+                        # Check if response starts with JSON
+                        if response_text.strip().startswith("{"):
+                            json_data = json.loads(response_text)
+                            analyze_span.set_attribute(
+                                "gen_ai.response.is_valid_json",
+                                True,
+                            )
+                            analyze_span.set_attribute(
+                                "gen_ai.response.json_keys",
+                                (
+                                    ",".join(json_data.keys())
+                                    if isinstance(json_data, dict)
+                                    else ""
+                                ),
+                            )
+                            logger.debug(
+                                f"[RESPONSE ANALYZE] Agent '{agent_name}' → "
+                                f"Valid JSON with keys: {list(json_data.keys()) if isinstance(json_data, dict) else 'N/A'}"
+                            )
+                    except json.JSONDecodeError:
+                        analyze_span.set_attribute(
+                            "gen_ai.response.is_valid_json", False
+                        )
+                        logger.debug(
+                            f"[RESPONSE ANALYZE] Agent '{agent_name}' → "
+                            f"Text response (not JSON): {len(response_text)} chars"
+                        )
+
+    except Exception as e:
+        logger.warning(
+            f"[INSTRUMENTATION] Failed to instrument agent output for '{agent_name}': {e}",
+            exc_info=True,
+        )
 
 
 class DynamicWorkflowService:
@@ -80,10 +262,12 @@ class DynamicWorkflowService:
 
     def _create_agent_executor(self, config: AgentExecutorConfig) -> "AgentExecutor":
         """Create an agent executor from configuration."""
+        # Use agent_name consistently - this will be used in spans
+        agent_name = config.agent_name or config.name
         return AgentExecutor(
             name=config.name,
-            agent_name=config.agent_name or config.name,
-            agent_id=config.agent_id or config.name,
+            agent_name=agent_name,
+            agent_id=agent_name,  # Use agent_name as id for consistency in spans
             instructions=config.instructions or "You are a helpful assistant.",
             tools=self._resolve_tools(config.tools),
             client=self._get_client(),
@@ -457,10 +641,12 @@ class AgentExecutor(Executor):
     def _get_agent(self):
         """Get or create the agent."""
         if self._agent is None:
+            # Use agent_name for both name and id to ensure consistency
+            # The framework uses the 'name' parameter for gen_ai.agent.name attribute
             self._agent = self.client.create_agent(
                 name=self.agent_name,
                 instructions=self.instructions,
-                id=self.agent_id,
+                id=self.agent_name,  # Use agent_name as id for consistency
                 tools=self.tools,
             )
         return self._agent
@@ -510,6 +696,14 @@ class AgentExecutor(Executor):
                 result = await agent.run(message)
                 response_text = (
                     result.text if hasattr(result, "text") else str(result) or "OK"
+                )
+
+                # Instrument agent output with granular spans for better visualization
+                _instrument_agent_output(
+                    result=result,
+                    agent_name=self.agent_name,
+                    tracer=tracer,
+                    parent_span=executor_span,
                 )
 
                 logger.info(

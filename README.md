@@ -79,7 +79,6 @@ docker run -p 8000:8000 --env-file .env custom-agent
 - `GET /` - Informações da API
 - `POST /agent` - Envia mensagem para o agente
 - `POST /workflow` - Executa workflows dinâmicos de orquestração
-- `POST /workflow/viz` - Gera visualização Mermaid do workflow
 - `GET /health` - Health check
 
 ### POST /agent
@@ -574,48 +573,9 @@ Este workflow demonstra uma pipeline completa de desenvolvimento com 6 agentes e
 - **Observabilidade**: Trace IDs e logs detalhados de execução
 - **Streaming**: Suporte a execução streaming para respostas em tempo real
 
-### Visualização de Workflows
-
-Você pode visualizar workflows de forma visual usando várias ferramentas:
-
-#### Via API (Recomendado)
-
-```bash
-curl -X POST http://localhost:8000/workflow/viz \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow": {
-      "name": "my-workflow",
-      "executors": [...],
-      "edges": [...],
-      "start_executor": "..."
-    }
-  }'
-```
-
-A resposta inclui um diagrama Mermaid que pode ser visualizado em:
-- **VS Code**: Com extensão Mermaid Preview
-- **GitHub/GitLab**: Renderiza automaticamente em Markdown
-- **Mermaid Live Editor**: https://mermaid.live
-- **Qualquer ferramenta que suporte Mermaid**
-
-#### Extensões do VS Code Recomendadas
-
-- **Mermaid Preview** (`bierner.markdown-mermaid`): Visualiza diagramas Mermaid
-- **JSON Flow** (`ManuelGil.json-flow`): Visualiza JSON como grafos
-- **JSON Crack** (`AykutSarac.jsoncrack-vscode`): Visualiza estruturas JSON
-
-#### Ferramentas Online
-
-- **Mermaid Live Editor**: https://mermaid.live
-- **Draw.io**: https://app.diagrams.net (editor visual drag-and-drop)
-
-Para mais detalhes, consulte [WORKFLOW_VISUALIZATION.md](./WORKFLOW_VISUALIZATION.md).
-
 ### Documentação Adicional
 
 - [WORKFLOW_EXAMPLES.md](./WORKFLOW_EXAMPLES.md) - Exemplos detalhados de workflows
-- [WORKFLOW_VISUALIZATION.md](./WORKFLOW_VISUALIZATION.md) - Guia de visualização de workflows
 
 ## Observabilidade com Aspire Dashboard
 

@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from src.config import API_TRACES_INSTRUMENTATION_KEY, ASPIRE_OTLP_ENDPOINT
-from src.routes import agent, health, workflow, workflow_viz
+from src.routes import agent, health, workflow
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -50,7 +50,7 @@ try:
 
     # If it's not an SDK tracer provider, create one
     if not isinstance(tracer_provider, TracerProvider):
-        resource = Resource.create({"service.name": "custom-agent"})
+        resource = Resource.create({"service.name": "simith-agent"})
         tracer_provider = TracerProvider(resource=resource)
         trace.set_tracer_provider(tracer_provider)
 
@@ -69,19 +69,18 @@ except Exception as e:
 
 # Create FastAPI app
 app = FastAPI(
-    title="Custom Agent API",
+    title="Smith Agent API",
     version="1.0.0",
-    description="Custom Agent API",
+    description="Smith Agent API",
 )
 
 # Include routers
 app.include_router(agent.router)
 app.include_router(health.router)
 app.include_router(workflow.router)
-app.include_router(workflow_viz.router)
 
 
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "Custom Agent API", "version": "1.0.0"}
+    return {"message": "Smith Agent API", "version": "1.0.0"}
