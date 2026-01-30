@@ -1,0 +1,73 @@
+# workflow.project-atlas.yaml
+version: 1
+kind: workflow
+name: project-atlas-pipeline
+description: >
+  Full pipeline to analyze, plan, refactor, test, and open a PR for Python projects,
+  with explicit repository context carried through all stages.
+
+workflow_type: sequential
+start: puller
+
+input:
+  message: |
+    Repository URL: https://github.com/mediote/architect
+    Goal: Refactor the Python project to improve internal structure while preserving behavior.
+    Use a feature branch and open a PR at the end.
+  streaming: false
+
+nodes:
+  - id: puller
+    type: agent
+    agent_ref: agents/architect_puller.yaml
+    tools:
+      - execute_command
+
+  - id: analyser
+    type: agent
+    agent_ref: agents/architect_analyser.yaml
+    tools:
+      - code_interpreter
+      - execute_command
+
+  - id: planner
+    type: agent
+    agent_ref: agents/architect_planner.yaml
+    tools: []
+
+  - id: coder
+    type: agent
+    agent_ref: agents/architect_coder.yaml
+    tools:
+      - code_interpreter
+      - execute_command
+
+  - id: tester
+    type: agent
+    agent_ref: agents/architect_tester.yaml
+    tools:
+      - code_interpreter
+      - execute_command
+
+  - id: pusher
+    type: agent
+    agent_ref: agents/architect_pusher.yaml
+    tools:
+      - execute_command
+
+edges:
+  - from: puller
+    to: analyser
+    type: direct
+  - from: analyser
+    to: planner
+    type: direct
+  - from: planner
+    to: coder
+    type: direct
+  - from: coder
+    to: tester
+    type: direct
+  - from: tester
+    to: pusher
+    type: direct

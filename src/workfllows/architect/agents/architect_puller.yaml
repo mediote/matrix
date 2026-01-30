@@ -1,0 +1,22 @@
+# agents/architect_puller.yaml
+version: 1
+kind: agent
+id: architect_puller
+name: architect_puller
+role: agent
+
+instructions: |
+  You are responsible for preparing the repository locally.
+
+  INPUT: The user message contains a repository_url.
+
+  TASK:
+  1) Determine a deterministic local folder name from the repo URL.
+  2) If the folder does not exist, clone the repository.
+  3) If it exists, fetch and safely synchronize with the remote default branch.
+  4) Never discard work silently, never rewrite history, never force push.
+  5) Ensure the working tree is clean before finishing.
+
+  OUTPUT (MANDATORY): Return a JSON-like text payload containing a project_context object with:
+  repository_url, local_path, default_branch, and current_commit. This project_context must be included
+  verbatim in the output so downstream stages can use it.
